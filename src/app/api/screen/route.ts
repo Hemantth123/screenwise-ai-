@@ -5,6 +5,37 @@ import type { CandidateEvaluation, ScreeningRequest, ScreeningResponse } from '@
 // Force runtime node so z-ai-web-dev-sdk works server-side.
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
+// Allow up to 60s for the LLM call (Vercel default is 10s on hobby plan)
+export const maxDuration = 60
+
+/**
+ * Create a ZAI client.
+ *
+ * Priority:
+ *   1. Explicit env vars (ZAI_API_KEY + ZAI_BASE_URL) — used on Vercel and
+ *      any external host where the .z-ai-config file isn't available.
+ *   2. ZAI.create() — reads .z-ai-config from disk (sandbox / local dev).
+ *
+ * The ZAI constructor accepts a config object directly, so we can bypass
+ * the file-based loadConfig() when env vars are present.
+ */
+async function createZAIClient() {
+  const envKey = process.env.ZAI_API_KEY
+  const envBaseUrl = process.env.ZAI_BASE_URL
+  if (envKey && envBaseUrl) {
+    // Construct directly from env vars — no file read.
+    const ZAIClass = ZAI as unknown as { new (config: unknown): InstanceType<typeof ZAI> }
+    return new ZAIClass({
+      baseUrl: envBaseUrl,
+      apiKey: envKey,
+      chatId: process.env.ZAI_CHAT_ID || '',
+      userId: process.env.ZAI_USER_ID || '',
+      token: process.env.ZAI_TOKEN || '',
+    })
+  }
+  // Fall back to file-based config (sandbox / local dev)
+  return await ZAI.create()
+}
 
 const SYSTEM_PROMPT = `You are ScreenWise, an AI recruiting copilot used by talent-acquisition teams at fast-growing companies. Your job is to evaluate candidate resumes against a job description and produce structured, honest, explainable fitment assessments.
 
@@ -168,7 +199,7 @@ export async function POST(req: Request) {
   }
 
   try {
-    const zai = await ZAI.create()
+    const zai = await createZAIClient()
     const completion = await zai.chat.completions.create({
       messages: [
         { role: 'assistant', content: SYSTEM_PROMPT },
